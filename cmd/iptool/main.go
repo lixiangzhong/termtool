@@ -59,6 +59,8 @@ func main() {
 						break
 					}
 				}
+			default:
+				cli.ShowAppHelp(c)
 			}
 			return nil
 		},
