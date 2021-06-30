@@ -48,7 +48,7 @@ func main() {
 		Action: func(c *cli.Context) error {
 			switch c.NArg() {
 			case 1:
-				for _, f := range []FuncStringBool{CIDR2IPRange, IPRange, IPInt} {
+				for _, f := range []FuncStringBool{CIDR2IPRange, IPRange, PrintBits, IPInt} {
 					if f(c.Args().Get(0)) {
 						break
 					}
@@ -175,4 +175,15 @@ func IPMask(ip, mask string) (abort bool) {
 	fmt.Println("IPMask To CIDR:")
 	fmt.Println(cidr)
 	return true
+}
+
+func PrintBits(s string) (abort bool) {
+	ip := net.ParseIP(s)
+	if ip.To4() == nil {
+		return
+	}
+	ip = ip.To4()
+	fmt.Printf("BigEndian Bits:\t\t %08b %08b %08b %08b\n", ip[0], ip[1], ip[2], ip[3])
+	fmt.Printf("LittleEndian Bits:\t %08b %08b %08b %08b\n", ip[3], ip[2], ip[1], ip[0])
+	return false
 }
