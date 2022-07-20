@@ -4,13 +4,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"math/bits"
+	"math/big"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
 
-	"github.com/lixiangzhong/ipnet"
+	"github.com/lixiangzhong/termtool/pkg/netaddr"
 	"github.com/urfave/cli/v2"
 )
 
@@ -76,30 +77,51 @@ type FuncStringBool func(string) bool
 type FuncStringStringBool func(string, string) bool
 
 func CIDR2IPRange(s string) (abort bool) {
-	cidr, err := ipnet.ParseCIDR(s)
+	p, err := netip.ParsePrefix(s)
 	if err != nil {
 		return
 	}
-	start, end := cidr.StartEndIP()
+	// cidr, err := ipnet.ParseCIDR(s)
+
+	start, end := netaddr.CIDRToIPRange(p)
+	// start, end := cidr.StartEndIP()
 	fmt.Println("To IP Range:")
 	fmt.Println(start, end)
-	_, mask := cidr.IPMask()
+	// _, mask := cidr.IPMask()
+	mask := netaddr.CIDRNetMask(p)
 	fmt.Println("Mask:", mask)
 	return true
 }
 
 func IPInt(s string) (abort bool) {
+
 	{ //to int
-		ip := net.ParseIP(s)
-		if ip.To4() != nil {
-			i := binary.BigEndian.Uint32(ip.To4())
-			fmt.Println("To Uint32 BigEndian:\t", i)
-			i = binary.LittleEndian.Uint32(ip.To4())
-			fmt.Println("To Uint32 LittleEndian:\t", i)
-			abort = true
+		addr, err := netip.ParseAddr(s)
+		if err == nil {
+			if addr.Is4() {
+				i := binary.BigEndian.Uint32(addr.AsSlice())
+				fmt.Println("To Uint32 BigEndian:\t", i)
+				i = binary.LittleEndian.Uint32(addr.AsSlice())
+				fmt.Println("To Uint32 LittleEndian:\t", i)
+				abort = true
+			}
+			if addr.Is6() {
+				fmt.Println("To BigInt:\t", big.NewInt(0).SetBytes(addr.AsSlice()))
+				abort = true
+			}
 		}
 	}
 	{ //to ip
+
+		ii, ok := big.NewInt(0).SetString(s, 10)
+		if ok {
+			ip6 := make([]byte, 16)
+			ii.FillBytes(ip6)
+			addr, ok := netip.AddrFromSlice(ip6)
+			if ok {
+				fmt.Println("To IPv6:\t", addr)
+			}
+		}
 		ip := make(net.IP, 4)
 		i, err := strconv.ParseUint(s, 10, 32)
 		if err == nil {
@@ -121,32 +143,38 @@ func IPRange(s string) (abort bool) {
 	}
 	field1 := slice[0]
 	field2 := slice[1]
-	startip, err := ipnet.ParseIPv4(field1)
+	startip, err := netip.ParseAddr(field1)
 	if err != nil {
 		return
 	}
 	debug(field1, field2)
-	var endip ipnet.IPv4
+	var endip netip.Addr
 	if d, err := strconv.ParseUint(field2, 10, 8); err == nil {
 		debug(d)
-		if startip.IP[3] >= byte(d) {
+		// if startip.IP[3] >= byte(d) {
+		// 	return
+		// }
+		slice := startip.AsSlice()
+		if slice[len(slice)-1] >= byte(d) {
 			return
 		}
-		endip = ipnet.MustParseIPv4(field1)
-		debug(endip)
-		endip.SetD(byte(d))
-		debug(endip)
+		slice[len(slice)-1] = byte(d)
+		var ok bool
+		endip, ok = netip.AddrFromSlice(slice)
+		if !ok {
+			return
+		}
 	} else {
 		debug(err)
-		endip, err = ipnet.ParseIPv4(field2)
+		endip, err = netip.ParseAddr(field2)
 		if err != nil {
 			return
 		}
 	}
-	if startip.Int() > endip.Int() {
+	if startip.Compare(endip) > 0 {
 		return
 	}
-	cidr, err := ipnet.IPRangeToCIDR(startip.String(), endip.String())
+	cidr, err := netaddr.IPRangeToCIDR(startip.String(), endip.String())
 	if err != nil {
 		return
 	}
@@ -162,28 +190,61 @@ func IPRange2(a, b string) bool {
 }
 
 func IPMask(ip, mask string) (abort bool) {
-	cidr, err := ipnet.IPMaskToCIDR(ip, mask)
+	a, err := netip.ParseAddr(ip)
 	if err != nil {
 		return
 	}
-	if ipmask := net.ParseIP(mask).To4(); ipmask != nil {
-		ones, _ := net.IPMask(ipmask).Size()
-		if ones != bits.OnesCount32(binary.BigEndian.Uint32(ipmask)) {
-			return
-		}
+	m, err := netip.ParseAddr(mask)
+	if err != nil {
+		return
 	}
+	p, err := netaddr.IPMaskToCIDR(a, m)
+	if err != nil {
+		return
+	}
+	// cidr, err := ipnet.IPMaskToCIDR(ip, mask)
+	// if err != nil {
+	// 	return
+	// }
+	// if ipmask := net.ParseIP(mask).To4(); ipmask != nil {
+	// 	ones, _ := net.IPMask(ipmask).Size()
+	// 	if ones != bits.OnesCount32(binary.BigEndian.Uint32(ipmask)) {
+	// 		return
+	// 	}
+	// }
 	fmt.Println("IPMask To CIDR:")
-	fmt.Println(cidr)
+	fmt.Println(p)
 	return true
 }
 
 func PrintBits(s string) (abort bool) {
-	ip := net.ParseIP(s)
-	if ip.To4() == nil {
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
 		return
 	}
-	ip = ip.To4()
-	fmt.Printf("BigEndian Bits:\t\t %08b %08b %08b %08b\n", ip[0], ip[1], ip[2], ip[3])
-	fmt.Printf("LittleEndian Bits:\t %08b %08b %08b %08b\n", ip[3], ip[2], ip[1], ip[0])
+	slice := addr.AsSlice()
+	length := len(slice)
+	fmt.Printf("BigEndian Bits:\t\t")
+	for i := 0; i < length; i++ {
+		fmt.Printf("%08b ", slice[i])
+		if i == length-1 {
+			fmt.Println()
+		}
+	}
+	fmt.Printf("LittleEndian Bits:\t")
+	for i := 0; i < length; i++ {
+		fmt.Printf("%08b ", slice[length-i-1])
+		if i == length-1 {
+			fmt.Println()
+		}
+	}
 	return false
+	// ip := net.ParseIP(s)
+	// if ip.To4() == nil {
+	// 	return
+	// }
+	// ip = ip.To4()
+	// fmt.Printf("BigEndian Bits:\t\t %08b %08b %08b %08b\n", ip[0], ip[1], ip[2], ip[3])
+	// fmt.Printf("LittleEndian Bits:\t %08b %08b %08b %08b\n", ip[3], ip[2], ip[1], ip[0])
+	// return false
 }
